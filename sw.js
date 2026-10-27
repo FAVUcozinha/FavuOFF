@@ -1,4 +1,4 @@
-const CACHE_NAME = 'favu-client-v103-gastos-layout-igual-categorias';
+const CACHE_NAME = 'favu-client-v116-pacote-16';
 const urlsToCache = [
   './',
   './index.html',
@@ -7,7 +7,6 @@ const urlsToCache = [
   './style-cardapio.css',
   './script.js',
   './script-cardapio.js',
-  './admin.js',
   './manifest.json',
   './images/favu.png'
 ];

@@ -15,8 +15,29 @@ const db = getFirestore(app);
 
 let configCategorias = {};
 let bancoDeProdutos = {}; 
+Object.defineProperty(window, '__bancoDeProdutosRef', { get: () => bancoDeProdutos });
 window.totalPedidoAtivo = 0; 
 window.regrasAgenda = {}; // Agenda Global
+
+// 2026-10-15: uma data específica (aba Horários) pode valer só para algumas categorias.
+// Sem categorias = vale para todos os pedidos. Com categorias = só quando o carrinho
+// tem itens de alguma delas; senão, o dia segue a agenda normal.
+window.regraExcecaoAplicavel = function(dataISO) {
+    const regra = window.regrasAgenda ? window.regrasAgenda[dataISO] : null;
+    if (!regra) return null;
+    const cats = Array.isArray(regra.categorias) ? regra.categorias.filter(Boolean) : [];
+    if (!cats.length) return regra;
+    const norm = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+    const alvo = new Set(cats.map(norm));
+    const noCarrinho = new Set();
+    document.querySelectorAll('.quantidade-input').forEach(input => {
+        if ((parseInt(input.value) || 0) <= 0) return;
+        const prod = (window.__bancoDeProdutosRef || {})[input.getAttribute('data-item-id')] || {};
+        [prod.categoria, input.getAttribute('data-grupo')].forEach(c => { if (c) noCarrinho.add(norm(c)); });
+    });
+    for (const c of noCarrinho) if (alvo.has(c)) return regra;
+    return null;
+};
 
 // ==========================================
 // FORMATADOR DE TEXTO RICO SEGURO
@@ -202,19 +223,287 @@ window.filtrarHorariosDisponiveisPorAgora = function(dataISO, horarios) {
 };
 
 
+
+// =====================================================================
+// TEMA DO SITE (2026-10-15): cores + imagens do tema aplicado no painel.
+// Campos em branco mantêm o visual padrão do site. Fundos aceitam degradê.
+// =====================================================================
+function aplicarTemaSite(t) {
+    if (!t) return;
+    const root = document.documentElement;
+    const ehCardapio = !!document.getElementById('menu-principal');
+    const ehDegrade = v => /gradient\(/i.test(String(v || ''));
+    const primeiraCor = v => (String(v || '').match(/#[0-9a-f]{3,8}|rgba?\([^)]*\)/i) || [''])[0];
+    const r = [];
+    const fundo = ehCardapio ? (t.bgCardapio || t.bg) : t.bg;
+    if (fundo) {
+        if (ehDegrade(fundo)) {
+            const c = primeiraCor(fundo); if (c) root.style.setProperty('--bg-color', c);
+            r.push(`body { background: ${fundo} !important; background-attachment: fixed !important; }`);
+        } else root.style.setProperty('--bg-color', fundo);
+    }
+    // Cores gerais com degradê: a variável usa a primeira cor do degradê.
+    const corSolida = v => ehDegrade(v) ? primeiraCor(v) : v;
+    if (t.card) root.style.setProperty('--card-bg', corSolida(t.card)); else root.style.removeProperty('--card-bg');
+    if (t.txt) root.style.setProperty('--text-dark', corSolida(t.txt)); else root.style.removeProperty('--text-dark');
+    if (t.acc) { root.style.setProperty('--accent-orange', corSolida(t.acc)); root.style.setProperty('--accent-rust', corSolida(t.acc)); }
+    // "__sem__" = o tema pediu para não ter imagem nesse lugar.
+    const SEM = '__sem__';
+    // Guarda a imagem original para voltar a ela quando o campo fica vazio (prévia ao vivo).
+    const trocarImg = (sel, v) => { document.querySelectorAll(sel).forEach(img => {
+        if (img.dataset.orig === undefined) img.dataset.orig = img.getAttribute('src') || '';
+        if (!v) { img.style.display = ''; img.src = img.dataset.orig; }
+        else if (v === SEM) img.style.display = 'none';
+        else { img.style.display = ''; img.src = v; } }); };
+    const trocarFundo = (sel, v) => { const el = document.querySelector(sel); if (!el) return; el.style.backgroundImage = !v ? '' : (v === SEM ? 'none' : `url('${v}')`); };
+    trocarImg('.hero-logo-big', t.logoPrincipal);
+    trocarImg('.menu-logo-img', t.logoMenu || t.logoPrincipal);
+    trocarImg('.footer-logo', t.logoRodape);
+    trocarFundo('header', t.imgTopo);
+    // Sem imagem no topo: tira também a sombra que marcava o espaço.
+    const cab = document.querySelector('header');
+    if (cab) cab.style.boxShadow = t.imgTopo === SEM ? 'none' : '';
+    trocarFundo('footer', t.imgRodape);
+    trocarImg('#aboutModal .modal-img', t.imgQuemSomos);
+    // Regras de cada elemento, já prontas no tema (painel > Temas).
+    (Array.isArray(t.regrasCss) ? t.regrasCss : []).forEach(x => r.push(x));
+
+    const add = (cor, regra) => { if (cor) r.push(regra.replace(/\$C/g, cor)); };
+    add(t.corMenuLateral, '.side-menu { background: $C !important; }');
+    add(t.corIconesBotoes, '.card-icon, .card-icon i { color: $C !important; }');
+    add(t.corBotoes, '.clean-card, .btn-primary { background: $C !important; }');
+    add(t.corTextoBotoes, '.card-info h3, .btn-primary { color: $C !important; }');
+    add(t.corLegendaBotoes, '.card-info p { color: $C !important; }');
+    add(t.corTituloCategorias, '.categoria-title { color: $C !important; }');
+    add(t.corBotoesCategorias, '#categorias-horizontal a:not(.active-link) { background: $C !important; }');
+    add(t.corTextoCategorias, '#categorias-horizontal a:not(.active-link) { color: $C !important; }');
+    add(t.corFundoItens, '.table-card { background: $C !important; }');
+    add(t.corTituloItens, 'td.col-item, td.col-item .item-nome-texto { color: $C !important; }');
+    add(t.corDescricoes, '.descricao, .peso-mobile { color: $C !important; }');
+    add(t.corResumoPedido, '#fixed-summary { background: $C !important; }');
+    add(t.corFundoResumo, '#popup-resumo .popup-conteudo, #popup-resumo #cupom-container strong { background: $C !important; }');
+    add(t.corBotoesResumo, '#popup-resumo .btn-fazer-pedido, #popup-resumo .btn-primary-large, #popup-resumo #apply-cupom-btn { background: $C !important; }');
+    add(t.corFundoInfoPedido, '#popup-pedido .popup-conteudo { background: $C !important; }');
+    add(t.corBotoesInfoPedido, '#popup-pedido .btn-primary-large { background: $C !important; }');
+    let tag = document.getElementById('tema-dinamico');
+    if (!tag) { tag = document.createElement('style'); tag.id = 'tema-dinamico'; document.head.appendChild(tag); }
+    tag.textContent = r.join('\n');
+}
+
+// Prévia ao vivo (editor de temas do painel): recebe o tema que está sendo editado
+// e faz piscar o elemento que a pessoa clicou.
+function prepararPreviaAoVivo() {
+    if (window.__aoVivoPronto) return;
+    window.__aoVivoPronto = true;
+    const st = document.createElement('style');
+    st.textContent = '.favu-destaque{outline:3px dashed #E60000 !important;outline-offset:3px !important;animation:favuPisca 1s ease 3;} @keyframes favuPisca{50%{outline-color:transparent;}}';
+    document.head.appendChild(st);
+    window.addEventListener('message', async (ev) => {
+        if (ev.origin !== location.origin || !ev.data) return;
+        if (ev.data.tipo === 'favu-tema-ao-vivo') {
+            const d = ev.data.dados || {};
+            try { aplicarTemaSite(await resolverImagensTema(d)); } catch (e) {}
+            try {
+                if (typeof aplicarConteudoInicio === 'function' && d.conteudoInicio) aplicarConteudoInicio(d.conteudoInicio);
+                if (typeof aplicarConteudoCardapio === 'function' && d.conteudoCardapio) aplicarConteudoCardapio(d.conteudoCardapio, null);
+            } catch (e) {}
+        }
+        if (ev.data.tipo === 'favu-destacar') {
+            document.querySelectorAll('.favu-destaque').forEach(e => e.classList.remove('favu-destaque'));
+            const abrir = ev.data.abrir || '';
+            // Na prévia, o comunicado não fica na frente do que está sendo editado.
+            const aviso = document.getElementById('popup-aviso');
+            if (aviso) { aviso.classList.remove('show'); aviso.style.display = 'none'; }
+            const menu = document.getElementById('side-menu');
+            if (menu) menu.classList.toggle('active', abrir === 'menu');
+            const about = document.getElementById('aboutModal');
+            if (about) { if (abrir === 'quemsomos') { about.classList.add('show'); about.style.display = 'flex'; } else { about.classList.remove('show'); about.style.display = ''; } }
+            // Janelas do pedido na prévia: coloca um item de exemplo para mostrar itens, total e botões.
+            if ((abrir === 'resumo' || abrir === 'info') && ![...document.querySelectorAll('.quantidade-input')].some(i => (parseInt(i.value) || 0) > 0)) {
+                const exemplo = document.querySelector('.quantidade-input');
+                if (exemplo) { exemplo.value = 1; exemplo.dispatchEvent(new Event('input', { bubbles: true })); exemplo.dispatchEvent(new Event('change', { bubbles: true })); }
+            }
+            ['resumo', 'info'].forEach(n => {
+                const pop = document.getElementById(n === 'resumo' ? 'popup-resumo' : 'popup-pedido');
+                if (!pop) return;
+                if (abrir === n) { pop.style.display = 'flex'; pop.classList.add('show'); } else { pop.style.display = 'none'; pop.classList.remove('show'); }
+            });
+            if (!ev.data.seletor) return;
+            setTimeout(() => {
+                const els = document.querySelectorAll(ev.data.seletor);
+                els.forEach(e => e.classList.add('favu-destaque'));
+                if (els[0]) els[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 250);
+        }
+    });
+}
+
+// Prévia (painel > Temas > Prévia): ?tema_previa=<id> carrega o tema da lista,
+// já com o que ele herda do tema Padrão, sem precisar aplicar no site.
+async function obterTemaParaAplicar() {
+    const idPrevia = new URLSearchParams(location.search).get('tema_previa');
+    if (idPrevia) {
+        try {
+            if (new URLSearchParams(location.search).has('ao_vivo')) prepararPreviaAoVivo();
+            const snap = await getDoc(doc(db, 'config', 'temas_lista'));
+            const lista = snap.exists() ? (snap.data().temas || []) : [];
+            const t = lista.find(x => x.id === idPrevia);
+            const padrao = lista.find(x => x.id === 'padrao') || {};
+            if (t) {
+                const efetivo = {};
+                new Set([...Object.keys(padrao), ...Object.keys(t)]).forEach(k => { efetivo[k] = t[k] || (t.id !== 'padrao' ? padrao[k] : '') || ''; });
+                document.querySelectorAll('a[href]').forEach(a => {
+                    const href = a.getAttribute('href') || '';
+                    if (/(^|\/)(index|cardapio)\.html/.test(href) || href === './') a.setAttribute('href', href + (href.includes('?') ? '&' : '?') + 'tema_previa=' + encodeURIComponent(idPrevia));
+                });
+                return efetivo;
+            }
+        } catch (e) {}
+    }
+    // Tema agendado (painel > Temas > Agendamento): vale dentro do período.
+    try {
+        const ag = await getDoc(doc(db, 'config', 'tema_agendados'));
+        const agora = Date.now();
+        const vigentes = (ag.exists() ? (ag.data().lista || []) : []).filter(x => x && x.dados && (x.inicio == null || agora >= x.inicio) && (x.fim == null || agora < x.fim));
+        if (vigentes.length) return vigentes.sort((a, b) => (b.inicio || 0) - (a.inicio || 0))[0].dados;
+    } catch (e) {}
+    const temaDoc = await getDoc(doc(db, "config", "tema"));
+    return temaDoc.exists() ? temaDoc.data() : null;
+}
+
+// As imagens do tema ficam em documentos separados (config/tema_img_...), porque
+// juntas passavam do limite de 1 MB do Firestore. O tema guarda "cfgimg:<id>".
+async function resolverImagemTema(valor) {
+    const v = String(valor || '');
+    if (!v.startsWith('cfgimg:')) return v;
+    const id = v.slice(7);
+    try { const c = localStorage.getItem('favu_img_' + id); if (c) return c; } catch (e) {}
+    try {
+        const s = await getDoc(doc(db, 'config', id));
+        const data = s.exists() ? (s.data().data || '') : '';
+        try { if (data) localStorage.setItem('favu_img_' + id, data); } catch (e) {}
+        return data;
+    } catch (e) { return ''; }
+}
+async function resolverImagensTema(t) {
+    const campos = ['logoPrincipal', 'logoMenu', 'imgTopo', 'imgRodape', 'logoRodape', 'imgQuemSomos'];
+    const valores = await Promise.all(campos.map(k => resolverImagemTema(t[k])));
+    const out = { ...t };
+    campos.forEach((k, i) => { out[k] = valores[i]; });
+    return out;
+}
+
+
+// =====================================================================
+// EDITOR DO SITE (painel > Layout > Página inicial / Cardápio) — 2026-10-15
+// Se config/site_inicio ou config/site_cardapio existirem, os botões, links,
+// redes sociais e textos vêm de lá. Senão, o site fica como sempre foi.
+// Ações: link | quem_somos | cardapio | inicio | whatsapp | instagram
+// =====================================================================
+function escSite(v) { return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function hrefAcaoSite(item) {
+    const acao = item.acao || 'link';
+    const link = String(item.link || '').trim();
+    if (acao === 'quem_somos') return { href: '#', abreQuemSomos: true };
+    if (acao === 'cardapio') return { href: link || (item.cardapio && item.cardapio !== 'padrao' ? `cardapio.html?menu=${encodeURIComponent(item.cardapio)}` : 'cardapio.html') };
+    if (acao === 'inicio') return { href: link || 'index.html' };
+    if (acao === 'whatsapp') { const n = link.replace(/\D/g, ''); return { href: n ? `https://wa.me/${n}` : link, externo: true }; }
+    return { href: link || '#', externo: /^https?:/i.test(link) };
+}
+function linkSiteHtml(item, classe, conteudo) {
+    const a = hrefAcaoSite(item);
+    const alvo = a.externo ? ' target="_blank" rel="noopener"' : '';
+    const clique = a.abreQuemSomos ? ' onclick="event.preventDefault(); window.openAboutModal && window.openAboutModal();"' : '';
+    return `<a href="${escSite(a.href)}" class="${classe}"${alvo}${clique}>${conteudo}</a>`;
+}
+const visiveisSite = lista => (Array.isArray(lista) ? lista : []).filter(i => i && i.visivel !== false).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+function aplicarMenuLateralSite(dados) {
+    if (Array.isArray(dados.menuLateral)) {
+        const ul = document.querySelector('#side-menu .nav-links');
+        if (ul) ul.innerHTML = visiveisSite(dados.menuLateral).map(i => `<li>${linkSiteHtml(i, 'menu-link', escSite(i.titulo))}</li>`).join('');
+    }
+    if (Array.isArray(dados.redes)) {
+        const box = document.querySelector('#side-menu .menu-socials');
+        if (box) box.innerHTML = visiveisSite(dados.redes).map(i => linkSiteHtml(i, 'menu-social-link', `<i class="${escSite(i.icone || 'fas fa-link')}"></i> ${escSite(i.titulo)}`)).join('');
+    }
+}
+function aplicarQuemSomosSite(qs) {
+    if (!qs) return;
+    const corpo = document.querySelector('#aboutModal .modal-text');
+    const fmt = v => (window.formatText ? window.formatText(v) : v);
+    if (corpo && (qs.texto || qs.destaque)) corpo.innerHTML = (qs.texto ? fmt(qs.texto) : '') + (qs.destaque ? `<p class="highlight">${fmt(qs.destaque)}</p>` : '');
+    const btn = document.querySelector('#aboutModal .btn-primary');
+    if (btn) {
+        if (qs.botaoVisivel === false) btn.style.display = 'none';
+        else {
+            if (qs.botaoTexto) btn.textContent = qs.botaoTexto;
+            if (qs.botaoLink) { const a = hrefAcaoSite({ acao: qs.botaoAcao || 'link', link: qs.botaoLink }); btn.setAttribute('href', a.href); }
+        }
+    }
+}
+function aplicarRodapeSite(r) {
+    if (!r) return;
+    if (r.copyright) document.querySelectorAll('footer .copy').forEach(p => { p.textContent = r.copyright; });
+    if (r.assinatura) document.querySelectorAll('footer .desktop-signature span').forEach(s => { s.textContent = r.assinatura; });
+}
+async function carregarDadosSite(id) {
+    try { const d = await getDoc(doc(db, 'config', id)); return d.exists() ? d.data() : null; } catch (e) { return null; }
+}
+
+// Textos do cardápio editáveis no painel (Layout > Cardápio).
+window.__textosCardapio = { tituloResumo: 'RESUMO DO PEDIDO', botaoFazerPedido: 'FAZER PEDIDO', tituloInfo: 'INFORMAÇÕES DO PEDIDO', botaoConfirmar: 'CONFIRMAR PEDIDO', saudacaoWhatsapp: 'Olá, Favu!\nGostaria de encomendar os itens abaixo:' };
+async function aplicarSiteCardapio() {
+    const tema = window.__temaAtual || {};
+    const cardapio = tema.conteudoCardapio || await carregarDadosSite('site_cardapio');
+    const inicio = tema.conteudoInicio || await carregarDadosSite('site_inicio');
+    aplicarConteudoCardapio(cardapio, inicio);
+}
+function aplicarConteudoCardapio(cardapio, inicio) {
+    if (inicio) { aplicarQuemSomosSite(inicio.quemSomos); aplicarRodapeSite(inicio.rodape); }
+    if (!cardapio) return;
+    aplicarMenuLateralSite(cardapio);
+    const t = cardapio.textos || {};
+    Object.keys(window.__textosCardapio).forEach(k => { if (t[k] && String(t[k]).trim()) window.__textosCardapio[k] = String(t[k]); });
+    const h1 = document.querySelector('#popup-resumo h2'); if (h1) h1.textContent = window.__textosCardapio.tituloResumo;
+    const h2 = document.querySelector('#popup-pedido h2'); if (h2) h2.textContent = window.__textosCardapio.tituloInfo;
+    const bc = document.querySelector('#popup-pedido .btn-primary-large'); if (bc) bc.textContent = window.__textosCardapio.botaoConfirmar;
+}
+// =====================================================================
+// VÁRIOS CARDÁPIOS (2026-10-15): cardapio.html?menu=<endereço> abre um cardápio
+// específico (ex.: Natal). Sem "menu" = cardápio padrão. A lista fica em config/cardapios.
+// Cada categoria diz em quais cardápios aparece (sem a lista = só no padrão).
+// =====================================================================
+window.__cardapioAtual = { id: 'padrao', nome: 'Cardápio padrão' };
+async function carregarCardapioAtual() {
+    const pedido = (new URLSearchParams(location.search).get('menu') || '').trim().toLowerCase();
+    if (!pedido || pedido === 'padrao') return;
+    try {
+        const snap = await getDoc(doc(db, 'config', 'cardapios'));
+        const lista = snap.exists() && Array.isArray(snap.data().lista) ? snap.data().lista : [];
+        const achado = lista.find(c => c && c.id === pedido && c.ativo !== false);
+        if (achado) window.__cardapioAtual = { id: achado.id, nome: achado.nome || achado.id };
+    } catch (e) {}
+    // Os links internos continuam neste cardápio.
+    if (window.__cardapioAtual.id !== 'padrao') {
+        document.querySelectorAll('a[href]').forEach(a => {
+            const h = a.getAttribute('href') || '';
+            if (/^cardapio\.html(\?|$)/.test(h) && !/menu=/.test(h)) a.setAttribute('href', h + (h.includes('?') ? '&' : '?') + 'menu=' + encodeURIComponent(window.__cardapioAtual.id));
+        });
+    }
+}
+function categoriaNoCardapioAtual(c) {
+    const lista = Array.isArray(c.cardapios) ? c.cardapios : ['padrao'];
+    return lista.includes(window.__cardapioAtual.id);
+}
+
 document.addEventListener("DOMContentLoaded", async function () {
     
-    // Tema Cores
+    // Tema Cores + Imagens
     try {
-        const temaDoc = await getDoc(doc(db, "config", "tema"));
-        if (temaDoc.exists()) {
-            const t = temaDoc.data();
-            const root = document.documentElement;
-            if(t.bg) root.style.setProperty('--bg-color', t.bg);
-            if(t.card) root.style.setProperty('--card-bg', t.card);
-            if(t.txt) root.style.setProperty('--text-dark', t.txt);
-            if(t.acc) { root.style.setProperty('--accent-orange', t.acc); root.style.setProperty('--accent-rust', t.acc); }
-        }
+        const temaAtual = await obterTemaParaAplicar();
+        window.__temaAtual = temaAtual;
+        aplicarSiteCardapio();
+        if (temaAtual) aplicarTemaSite(await resolverImagensTema(temaAtual));
     } catch(e) {}
 
     // Agenda de Horários Globais e Exceções
@@ -287,12 +576,88 @@ document.addEventListener("DOMContentLoaded", async function () {
         return imgs;
     }
 
+    // NOVO (2026-10): carrossel do comunicado. Uma imagem por vez, centralizada,
+    // passando sozinha em loop (como o da página inicial). Desliza com o dedo e
+    // tem bolinhas embaixo da imagem. Sem setas por cima da imagem.
+    function iniciarCarrosselAviso(root) {
+        const carrossel = root.querySelector('.aviso-carousel');
+        if (!carrossel) return;
+        const track = carrossel.querySelector('.aviso-carousel-track');
+        const total = Number(carrossel.dataset.total) || 1;
+        if (!track || total < 2) return;
+        const dots = Array.from(carrossel.querySelectorAll('.aviso-carousel-dots span'));
+        // Clone da primeira no fim para o loop não "voltar correndo".
+        const clone = track.firstElementChild.cloneNode(true);
+        clone.setAttribute('aria-hidden', 'true');
+        track.appendChild(clone);
+
+        let atual = 0, pausadoAte = 0, arrastando = false, inicioX = 0, deltaX = 0;
+        const aplicar = (animar) => {
+            track.style.transition = animar ? 'transform .55s ease' : 'none';
+            track.style.transform = `translateX(${-atual * 100}%)`;
+            dots.forEach((d, idx) => d.classList.toggle('ativo', idx === (atual % total)));
+        };
+        const irPara = (i) => {
+            if (i < 0) { atual = total; aplicar(false); void track.offsetWidth; i = total - 1; }
+            atual = i;
+            aplicar(true);
+        };
+        track.addEventListener('transitionend', () => {
+            if (atual >= total) { atual = 0; aplicar(false); }
+        });
+        const pausar = () => { pausadoAte = Date.now() + 6000; };
+
+        const xDe = (e) => (e.touches ? e.touches[0].clientX : e.clientX);
+        const comecar = (e) => { arrastando = true; inicioX = xDe(e); deltaX = 0; pausar(); track.style.transition = 'none'; };
+        const mover = (e) => {
+            if (!arrastando) return;
+            deltaX = xDe(e) - inicioX;
+            const largura = carrossel.clientWidth || 1;
+            track.style.transform = `translateX(calc(${-atual * 100}% + ${deltaX}px))`;
+            if (Math.abs(deltaX) > 8 && e.cancelable) e.preventDefault();
+            if (Math.abs(deltaX) > largura) deltaX = Math.sign(deltaX) * largura;
+        };
+        const terminar = () => {
+            if (!arrastando) return;
+            arrastando = false;
+            const limite = Math.min(60, (carrossel.clientWidth || 300) * 0.15);
+            if (deltaX <= -limite) irPara(atual + 1);
+            else if (deltaX >= limite) irPara(atual - 1);
+            else aplicar(true);
+            if (Math.abs(deltaX) > 8) carrossel.dataset.arrastou = '1';
+            setTimeout(() => { delete carrossel.dataset.arrastou; }, 50);
+        };
+        track.addEventListener('touchstart', comecar, { passive: true });
+        track.addEventListener('touchmove', mover, { passive: false });
+        track.addEventListener('touchend', terminar);
+        track.addEventListener('mousedown', (e) => { e.preventDefault(); comecar(e); });
+        window.addEventListener('mousemove', mover);
+        window.addEventListener('mouseup', terminar);
+        // Não abre o zoom quando o toque foi para deslizar.
+        track.addEventListener('click', (e) => { if (carrossel.dataset.arrastou) { e.stopPropagation(); e.preventDefault(); } }, true);
+        dots.forEach((d, idx) => d.addEventListener('click', () => { pausar(); irPara(idx); }));
+
+        aplicar(false);
+        clearInterval(window.__avisoCarrosselTimer);
+        window.__avisoCarrosselTimer = setInterval(() => {
+            if (!document.body.contains(track)) return clearInterval(window.__avisoCarrosselTimer);
+            if (arrastando || Date.now() < pausadoAte) return;
+            irPara(atual + 1);
+        }, 3500);
+    }
+
     function renderAvisoPopupContent(aviso) {
         const texto = window.formatText(aviso?.texto || '');
         const posicaoImagem = (aviso?.posicaoImagem || 'top').toLowerCase() === 'bottom' ? 'bottom' : 'top';
         const avisoImgs = getAvisoImagensCliente(aviso);
+        // NOVO (2026-10): várias imagens viram um carrossel (uma por vez, passa sozinho
+        // e o cliente pode deslizar para os lados), igual ao da página inicial.
+        const variasImgs = avisoImgs.length > 1;
         const imagemHtml = avisoImgs.length
-            ? `<div class="aviso-popup-image aviso-popup-image-${posicaoImagem} aviso-popup-gallery">${avisoImgs.map((url, idx) => `<img src="${url}" alt="Imagem do comunicado ${idx + 1}" class="imagem-ampliavel" onclick="window.abrirZoomImagem(this.src)">`).join('')}</div>`
+            ? `<div class="aviso-popup-image aviso-popup-image-${posicaoImagem} aviso-carousel" data-total="${avisoImgs.length}">
+                <div class="aviso-carousel-viewport"><div class="aviso-carousel-track">${avisoImgs.map((url, idx) => `<div class="aviso-carousel-slide"><img src="${url}" alt="Imagem do comunicado ${idx + 1}" class="imagem-ampliavel" draggable="false" onclick="window.abrirZoomImagem(this.src)"></div>`).join('')}</div></div>
+                ${variasImgs ? `<div class="aviso-carousel-dots">${avisoImgs.map((_, idx) => `<span class="${idx === 0 ? 'ativo' : ''}"></span>`).join('')}</div>` : ''}
+            </div>`
             : '';
 
         return `
@@ -342,6 +707,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 textoEl.innerHTML = renderAvisoPopupContent(aviso);
                 popup.style.display = 'flex';
                 setTimeout(() => popup.classList.add('show'), 50);
+                setTimeout(() => iniciarCarrosselAviso(textoEl), 120);
             }
         } catch (e) {
             console.error('Erro ao carregar avisos:', e);
@@ -362,6 +728,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     async function carregarMenu() {
         try {
+            await carregarCardapioAtual();
             const catSnapshot = await getDocs(collection(db, "categorias"));
             const categoriasAtivas = []; 
             
@@ -378,13 +745,20 @@ document.addEventListener("DOMContentLoaded", async function () {
                     if (fim && agora > fim) estaVisivel = false;
                 }
 
+                // 2026-10-15: só as categorias do cardápio aberto (ex.: cardapio.html?menu=natal).
+                if (estaVisivel && !categoriaNoCardapioAtual(c)) estaVisivel = false;
+
                 if (estaVisivel) { 
                     categoriasAtivas.push(c.nome);
                     configCategorias[c.nome] = { 
                         idGrupo: `grupo-${c.nome.toLowerCase().replace(/\s/g, '-')}`, 
                         idTabela: `tabela-${c.nome.toLowerCase().replace(/\s/g, '-')}`, 
                         minTotal: c.minTotal || 0, minIndividual: c.minIndividual || false,
-                        tipoColuna: c.tipoColuna || 'Tamanho', mensagemObs: c.mensagemObs || ''
+                        tipoColuna: c.tipoColuna || 'Tamanho', mensagemObs: c.mensagemObs || '',
+                        // Datas permitidas para retirada (AAAA-MM-DD). Em branco = agenda normal.
+                        entregaInicioData: c.entregaInicioData || '',
+                        entregaFimData: c.entregaFimData || '',
+                        entregaMensagem: c.entregaMensagem || ''
                     };
                 }
             });
@@ -420,6 +794,22 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             renderizarCardapio(itensAgrupados);
         } catch (error) { console.error(error); }
+    }
+
+    // ALTERADO (2026-10): o resumo do pedido é sempre "Nome | Tamanho", montado na hora
+    // (sem a descrição), e não depende mais do campo descricaoResumo gravado no produto.
+    function textoPuroCliente(valor) {
+        const d = document.createElement('div');
+        d.innerHTML = String(valor || '');
+        return (d.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function resumoProdutoCliente(item) {
+        const nome = textoPuroCliente(item?.nome) || 'Item';
+        const tam = String(item?.tamanho || '').trim();
+        return tam ? `${nome} | ${tam}` : nome;
+    }
+    function escaparAtributoCliente(v) {
+        return String(v || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     }
 
     function normalizarChaveProduto(value) {
@@ -520,7 +910,9 @@ document.addEventListener("DOMContentLoaded", async function () {
             const config = configCategorias[nomeCategoria];
             navHorizontal.innerHTML += `<a href="#${config.idGrupo}" class="categoria-btn ${primeiraCategoria ? 'active-link' : ''}" data-target="${config.idGrupo}">${nomeCategoria}</a>`;
 
-            const infoBoxHTML = (config.mensagemObs && config.mensagemObs.trim() !== '') ? `<div class="info-box"><div class="info-box-content">${window.formatText(config.mensagemObs)}</div></div>` : '';
+            // 2026-10-15: a mensagem de retirada não aparece mais na categoria; só no resumo e na data.
+            const avisoRetiradaHTML = '';
+            const infoBoxHTML = avisoRetiradaHTML + ((config.mensagemObs && config.mensagemObs.trim() !== '') ? `<div class="info-box"><div class="info-box-content">${window.formatText(config.mensagemObs)}</div></div>` : '');
             
             let htmlGrupo = `
                 <div class="categoria-group ${primeiraCategoria ? 'active-group' : ''}" id="${config.idGrupo}">
@@ -604,13 +996,16 @@ document.addEventListener("DOMContentLoaded", async function () {
             const inputHtml = `
                 <div class="quantidade-input-group">
                     <button type="button" class="qtd-btn-table" onclick="window.alterarQuantidadeTabela('${itemKey}', -1, ${item.min || 1})">-</button>
-                    <input type="number" value="0" min="0" data-min="${item.min || 1}" data-preco="${item.preco}" data-resumo="${item.descricaoResumo || item.nome}" data-grupo="${nomeGrupo}" data-item-id="${itemId}" data-produto-key="${itemKey}" class="quantidade-input">
+                    <input type="number" value="0" min="0" data-min="${item.min || 1}" data-preco="${item.preco}" data-resumo="${escaparAtributoCliente(resumoProdutoCliente(item))}" data-grupo="${nomeGrupo}" data-item-id="${itemId}" data-produto-key="${itemKey}" class="quantidade-input">
                     <button type="button" class="qtd-btn-table" onclick="window.alterarQuantidadeTabela('${itemKey}', 1, ${item.min || 1})">+</button>
                 </div>`;
 
             const imagensProdutoItem = getProdutoImagensCliente(item);
             const temFoto = imagensProdutoItem.length > 0;
-            const temDescPopup = item.descricaoPopup && item.descricaoPopup.trim() !== "";
+            // 2026-10-15: a descrição do produto é a descrição da imagem. Não aparece
+            // embaixo do nome: abre na janela da foto, ou pelo ícone (i) quando não há foto.
+            const textoDescricaoItem = String(item.descricaoItem || item.descricaoPopup || '').trim();
+            const temDescPopup = textoDescricaoItem !== '';
             const isClickable = temFoto || temDescPopup;
 
             let iconeHint = '';
@@ -625,7 +1020,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
             const celulaNomeHTML = `
                 <div class="item-nome-texto" style="line-height: 1.2;">${window.formatText(itemNameClean)}</div>
-                ${item.descricaoItem ? `<div class="descricao" style="text-align: left;">${window.formatText(item.descricaoItem)}</div>` : ''}
             `;
             
             let tdSecundaria = '';
@@ -699,13 +1093,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 
         const imagensProdutoPopup = getProdutoImagensCliente(itemInfo);
         const temFoto = imagensProdutoPopup.length > 0;
-        const temDescPopup = itemInfo.descricaoPopup && itemInfo.descricaoPopup.trim() !== "";
+        const textoDescricao = String(itemInfo.descricaoItem || itemInfo.descricaoPopup || '').trim();
+        const temDescPopup = textoDescricao !== '';
         
         if(!temFoto && !temDescPopup) return;
 
         const modal = document.getElementById('popup-item-imagem');
         document.getElementById('item-nome-display').textContent = itemInfo.nome;
-        document.getElementById('item-descricao-display').innerHTML = window.formatText(itemInfo.descricaoPopup || itemInfo.descricaoItem || '');
+        document.getElementById('item-descricao-display').innerHTML = window.formatText(textoDescricao);
         
         window.produtoPopupImagens = imagensProdutoPopup;
         window.produtoPopupImagemAtual = 0;
@@ -734,6 +1129,14 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     function configurarEventosDrag() {
         const categoriesNav = document.getElementById('categorias-horizontal'); if(!categoriesNav) return;
+        // 2026-10-15: quando todas cabem, ficam centralizadas e sem corte; senão, rolam.
+        const ajustarAbasCabem = () => {
+            categoriesNav.classList.remove('abas-cabem');
+            categoriesNav.classList.toggle('abas-cabem', categoriesNav.scrollWidth <= categoriesNav.clientWidth + 1);
+        };
+        ajustarAbasCabem();
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustarAbasCabem);
+        if (!window.__abasResizeOk) { window.__abasResizeOk = true; window.addEventListener('resize', ajustarAbasCabem); }
         let isDown = false; let startX, scrollLeft;
         
         categoriesNav.addEventListener('mousedown', (e) => { isDown = true; startX = e.pageX - categoriesNav.offsetLeft; scrollLeft = categoriesNav.scrollLeft; });
@@ -768,7 +1171,133 @@ document.addEventListener("DOMContentLoaded", async function () {
     const btnCarrinho = document.getElementById("fixed-summary");
     if(btnCarrinho) { btnCarrinho.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); window.abrirResumoPopup(); }); }
     
+    // =====================================================================
+    // DATAS PERMITIDAS PARA RETIRADA POR CATEGORIA (2026-10)
+    // Se o pedido tem itens de uma categoria com período de retirada (ex.: Natal,
+    // 22/12 a 26/12), o calendário só aceita datas dentro desse período.
+    // Com várias categorias restritas, vale o período em comum entre elas.
+    // =====================================================================
+    function formatarDataCurtaRetirada(iso) {
+        const [a, m, d] = String(iso || '').split('-');
+        return a && m && d ? `${d}/${m}` : '';
+    }
+    function formatarDataLongaRetirada(iso) {
+        const [a, m, d] = String(iso || '').split('-');
+        return a && m && d ? `${d}/${m}/${a}` : '';
+    }
+
+    function descreverPeriodoRetirada(ini, fim) {
+        const i = formatarDataLongaRetirada(ini), f = formatarDataLongaRetirada(fim);
+        if (i && f) return i === f ? `no dia ${i}` : `no período de ${i} - ${f}`;
+        if (i) return `a partir de ${i}`;
+        if (f) return `até ${f}`;
+        return '';
+    }
+
+    // Mensagem exibida ao cliente. Se a categoria tiver uma mensagem própria (campo
+    // "Mensagem exibida no site" no painel), usa ela. Senão, monta a mensagem padrão.
+    function mensagemRetiradaCategoria(nomeCat, cfg) {
+        if (!cfg || !(cfg.entregaInicioData || cfg.entregaFimData)) return '';
+        if (cfg.entregaMensagem && String(cfg.entregaMensagem).trim()) return String(cfg.entregaMensagem).trim();
+        return `Pedidos contendo os itens da categoria ${nomeCat} só são permitidos para retirada ${descreverPeriodoRetirada(cfg.entregaInicioData, cfg.entregaFimData)}.`;
+    }
+
+    function mensagemJanelaRetirada(janela) {
+        if (!janela || !janela.restrita) return '';
+        if (janela.categorias.length === 1) {
+            const c = janela.categorias[0];
+            return mensagemRetiradaCategoria(c.nome, c.cfg);
+        }
+        return `Pedidos contendo os itens das categorias ${janela.nomes} só são permitidos para retirada ${descreverPeriodoRetirada(janela.inicio, janela.fim)}.`;
+    }
+
+    function getHojeISOLocal() {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function normalizarNomeCategoria(v) {
+        return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+    }
+    function getConfigCategoria(nome) {
+        if (configCategorias[nome]) return configCategorias[nome];
+        const chave = normalizarNomeCategoria(nome);
+        const achada = Object.keys(configCategorias).find(k => normalizarNomeCategoria(k) === chave);
+        return achada ? configCategorias[achada] : null;
+    }
+
+    function calcularJanelaRetiradaCarrinho() {
+        const categorias = new Map();
+        const processados = new Set();
+        document.querySelectorAll(".quantidade-input").forEach(input => {
+            const chave = input.getAttribute("data-produto-key") || input.getAttribute("data-item-id");
+            if (processados.has(chave)) return;
+            processados.add(chave);
+            if ((parseInt(input.value) || 0) <= 0) return;
+            const produto = bancoDeProdutos[input.getAttribute("data-item-id")] || {};
+            const nomes = [produto.categoria, input.getAttribute("data-grupo")].filter(Boolean);
+            for (const nomeCat of nomes) {
+                const cfg = getConfigCategoria(nomeCat);
+                if (cfg && (cfg.entregaInicioData || cfg.entregaFimData)) {
+                    categorias.set(nomeCat, { nome: nomeCat, ini: cfg.entregaInicioData || '', fim: cfg.entregaFimData || '', cfg });
+                    break;
+                }
+            }
+        });
+
+        const lista = [...categorias.values()];
+        let inicio = '', fim = '';
+        lista.forEach(c => {
+            if (c.ini && (!inicio || c.ini > inicio)) inicio = c.ini;
+            if (c.fim && (!fim || c.fim < fim)) fim = c.fim;
+        });
+        const nomes = lista.map(c => c.nome).join(', ');
+        return { restrita: lista.length > 0, inicio, fim, categorias: lista, nomes, conflito: !!(inicio && fim && inicio > fim) };
+    }
+    window.calcularJanelaRetiradaCarrinho = calcularJanelaRetiradaCarrinho;
+
+    function validarDataNaJanelaRetirada(dataISO, janela) {
+        if (!janela || !janela.restrita || !dataISO) return null;
+        if ((janela.inicio && dataISO < janela.inicio) || (janela.fim && dataISO > janela.fim)) {
+            return `⛔ ${mensagemJanelaRetirada(janela)}`;
+        }
+        return null;
+    }
+
+    function verificarJanelaAntesDoPedido(janela) {
+        if (!janela.restrita) return true;
+        if (janela.conflito) {
+            const detalhes = janela.categorias.map(c => `• ${c.nome}: ${descreverPeriodoRetirada(c.ini, c.fim)}`).join('\n');
+            alert(`Os itens do seu pedido têm períodos de retirada diferentes e não dá para retirar tudo na mesma data:\n\n${detalhes}\n\nPor favor, faça pedidos separados.`);
+            return false;
+        }
+        if (janela.fim && janela.fim < getHojeISOLocal()) {
+            alert(`O período de retirada dos itens de ${janela.nomes} já terminou. Remova esses itens para continuar.`);
+            return false;
+        }
+        return true;
+    }
+
+    // Aviso dentro do resumo do pedido, assim que entra um item com período de retirada.
+    function atualizarAvisoJanelaResumo() {
+        const lista = document.getElementById("popup-resumo-itens");
+        if (!lista) return;
+        let aviso = document.getElementById("aviso-janela-resumo");
+        if (!aviso) {
+            aviso = document.createElement("div");
+            aviso.id = "aviso-janela-resumo";
+            aviso.className = "aviso-janela-retirada";
+            lista.insertAdjacentElement('beforebegin', aviso);
+        }
+        // 2026-10-15: a mensagem aparece só abaixo do campo de data, não no resumo.
+        aviso.innerHTML = '';
+        aviso.style.display = 'none';
+    }
+    window.atualizarAvisoJanelaResumo = atualizarAvisoJanelaResumo;
+
     window.abrirPopup = function() { 
+        const janelaRetirada = calcularJanelaRetiradaCarrinho();
+        if (!verificarJanelaAntesDoPedido(janelaRetirada)) return;
         window.fecharResumoPopup(); 
         const p = document.getElementById("popup-pedido"); 
         if(p) { 
@@ -780,9 +1309,28 @@ document.addEventListener("DOMContentLoaded", async function () {
             const inputHorario = document.getElementById("horario");
             const containerHorario = document.getElementById("horario-entrega-container") || inputHorario.parentNode;
 
-            // Bloqueia dias do passado nativamente no calendário
-            const hoje = new Date().toISOString().split('T')[0];
-            inputData.setAttribute('min', hoje);
+            // Bloqueia dias do passado nativamente no calendário e, se houver itens
+            // com período de retirada, limita o calendário a esse período.
+            const hoje = getHojeISOLocal();
+            const minData = janelaRetirada.inicio && janelaRetirada.inicio > hoje ? janelaRetirada.inicio : hoje;
+            inputData.setAttribute('min', minData);
+            if (janelaRetirada.fim) inputData.setAttribute('max', janelaRetirada.fim);
+            else inputData.removeAttribute('max');
+
+            let avisoJanela = document.getElementById("aviso-janela-retirada");
+            if (!avisoJanela) {
+                avisoJanela = document.createElement("div");
+                avisoJanela.id = "aviso-janela-retirada";
+                avisoJanela.className = "aviso-janela-retirada";
+                inputData.insertAdjacentElement('afterend', avisoJanela);
+            }
+            if (janelaRetirada.restrita) {
+                // 2026-10-15: só o texto, logo abaixo do campo de data (sem ícone).
+                avisoJanela.innerHTML = window.formatText(mensagemJanelaRetirada(janelaRetirada));
+                avisoJanela.style.display = 'block';
+            } else {
+                avisoJanela.style.display = 'none';
+            }
 
             // Limpa os campos sempre que abrir o popup novo
             inputData.value = '';
@@ -835,7 +1383,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const partesData = dataEscolhida.split('-');
                 const diaDaSemana = new Date(partesData[0], partesData[1] - 1, partesData[2]).getDay();
 
-                const regraExcecao = window.regrasAgenda ? window.regrasAgenda[dataEscolhida] : null;
+                const regraExcecao = window.regraExcecaoAplicavel(dataEscolhida);
                 const regraGeralDoDia = window.configGeralAgenda ? window.configGeralAgenda[diaDaSemana] : null;
 
                 const resetarDataInvalida = (mensagem) => {
@@ -860,6 +1408,22 @@ document.addEventListener("DOMContentLoaded", async function () {
                 // Esconde a caixa de aviso e REEXIBE a caixa de horário somente após a data ser escolhida e validada
                 if(avisoFechado) avisoFechado.style.display = 'none';
                 containerHorario.style.display = 'block';
+
+                // 0. DATA FORA DO PERÍODO DE RETIRADA DOS ITENS (ex.: cardápio de Natal)
+                const msgJanelaRetirada = validarDataNaJanelaRetirada(dataEscolhida, calcularJanelaRetiradaCarrinho());
+                if (msgJanelaRetirada) {
+                    // 2026-10-15: a mensagem do período já está logo abaixo da data. Não repete:
+                    // só limpa a data e destaca a mensagem por um instante.
+                    resetarDataInvalida('');
+                    if (avisoFechado) avisoFechado.style.display = 'none';
+                    const avisoPeriodo = document.getElementById('aviso-janela-retirada');
+                    if (avisoPeriodo) {
+                        avisoPeriodo.classList.remove('alerta');
+                        void avisoPeriodo.offsetWidth;
+                        avisoPeriodo.classList.add('alerta');
+                    }
+                    return;
+                }
 
                 // 1. DATA FECHADA MANUALMENTE (Puxa a mensagem customizada que você digitou)
                 if (regraExcecao && regraExcecao.indisponivel) {
@@ -1243,6 +1807,8 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         });
 
+        try { atualizarAvisoJanelaResumo(); } catch (e) {}
+
         if (totalBruto === 0) {
             resumoTotalPopup.style.display = 'none'; btnContainer.innerHTML = ''; fixedSummary.style.display = 'none'; window.fecharResumoPopup();
         } else {
@@ -1252,11 +1818,13 @@ document.addEventListener("DOMContentLoaded", async function () {
             
             resumoTotalPopup.innerHTML = `TOTAL: R$ ${totalLiquido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
             
-            if(temErroMinimo) { btnContainer.innerHTML = '<p style="color:red; text-align:center; font-size:1.1rem; font-family: \'Basic Choice\', cursive;">Ajuste as quantidades mínimas.</p>'; } else { btnContainer.innerHTML = '<button type="button" onclick="window.abrirPopup()" class="btn-fazer-pedido">FAZER PEDIDO</button>'; }
+            if(temErroMinimo) { btnContainer.innerHTML = '<p style="color:red; text-align:center; font-size:1.1rem; font-family: \'Basic Choice\', cursive;">Ajuste as quantidades mínimas.</p>'; } else { btnContainer.innerHTML = `<button type="button" onclick="window.abrirPopup()" class="btn-fazer-pedido">${escSite(window.__textosCardapio.botaoFazerPedido)}</button>`; }
         }
     }
 
     window.confirmarPedido = async function() {
+        // Prévia do tema (painel): nada é gravado nem enviado.
+        if (new URLSearchParams(location.search).has('tema_previa')) { alert('Esta é uma prévia do tema: pedidos estão desativados aqui.'); return; }
         const btn = document.querySelector('.btn-primary-large');
         const txtOriginal = btn.textContent;
         btn.textContent = "Processando...";
@@ -1271,11 +1839,17 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         const idPedido = gerarIdPedido(); 
-        let txt = `Olá, Favu!\nGostaria de encomendar os itens abaixo:\n\n*ID: ${idPedido}*\n\n- *Resumo:*\n\n`;
+        const linhaCardapio = window.__cardapioAtual && window.__cardapioAtual.id !== 'padrao' ? `*Cardápio: ${window.__cardapioAtual.nome}*\n` : '';
+        let txt = `${String(window.__textosCardapio.saudacaoWhatsapp).replace(/\\n/g, '\n')}\n\n*ID: ${idPedido}*\n${linhaCardapio}\n- *Resumo:*\n\n`;
+        const moedaWA = (v) => (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         let total = 0; 
         const gResumo = {}; 
         let temItens = false; 
         let itensParaPlanilha = ""; 
+        // CORREÇÃO HISTÓRICO (2026-10): lista com os itens "congelados" no momento do pedido
+        // (id do produto, nome, categoria, quantidade e preço). Assim, se o produto for
+        // renomeado ou mudar de preço depois, o pedido continua exatamente como foi feito.
+        const itensCongelados = [];
         let blocoSeguroTravado = false;
 
         const produtosPedidoProcessados = new Set();
@@ -1304,8 +1878,19 @@ document.addEventListener("DOMContentLoaded", async function () {
                 total += (q * p); 
                 if(!gResumo[grp]) gResumo[grp] = []; 
                 gResumo[grp].push({ q, p, desc }); 
-                
-                itensParaPlanilha += `${q} un. - ${desc}\n`;
+
+                const produtoIdItem = i.getAttribute("data-item-id") || '';
+                const produtoBanco = bancoDeProdutos[produtoIdItem] || {};
+                const precoUnit = Math.round(p * 100) / 100;
+                itensCongelados.push({
+                    produtoId: produtoIdItem,
+                    nome: String(desc || produtoBanco.nome || '').trim(),
+                    categoria: produtoBanco.categoria || grp || 'Geral',
+                    tamanho: produtoBanco.tamanho || '',
+                    qtd: q,
+                    precoUnitario: precoUnit,
+                    total: Math.round(q * precoUnit * 100) / 100
+                });
             }
         });
         
@@ -1315,10 +1900,12 @@ document.addEventListener("DOMContentLoaded", async function () {
             return; 
         }
 
+        // ALTERADO (2026-10): igual ao orçamento do painel, cada item mostra o valor
+        // unitário e o total ("Item | P - 1 un. (R$ 100,00 cada) = R$ 100,00").
         for (const grp in gResumo) {
-            txt += `*${grp}*\n`;
+            txt += `*${grp}:*\n`;
             gResumo[grp].forEach(item => {
-                txt += `• ${item.q}x ${item.desc}\n`;
+                txt += `${item.desc} - ${item.q} un. (R$ ${moedaWA(item.p)} cada) = R$ ${moedaWA(item.q * item.p)}\n`;
             });
             txt += `\n`;
         }
@@ -1340,13 +1927,34 @@ document.addEventListener("DOMContentLoaded", async function () {
             return; 
         }
 
-        if (window.regrasAgenda && window.regrasAgenda[dt] && window.regrasAgenda[dt].indisponivel) {
+        const janelaFinal = calcularJanelaRetiradaCarrinho();
+        const msgJanelaFinal = janelaFinal.conflito ? 'Os itens do pedido têm períodos de retirada diferentes. Faça pedidos separados.' : validarDataNaJanelaRetirada(dt, janelaFinal);
+        if (msgJanelaFinal) {
+            alert(textoPuroCliente(String(msgJanelaFinal).replace('⛔ ', '').replace(/<br\s*\/?>|<\/(div|p)>/gi, '\n')));
+            btn.textContent = txtOriginal; btn.disabled = false;
+            return;
+        }
+
+        if (window.regraExcecaoAplicavel(dt)?.indisponivel) {
             alert("A data selecionada está indisponível para entregas. Por favor, escolha outro dia.");
             btn.textContent = txtOriginal; 
             btn.disabled = false; 
             return;
         }
         
+        // CORREÇÃO HISTÓRICO: o resumo gravado agora leva categoria e preço de cada item,
+        // no mesmo formato do painel ("- Categoria:" / "2 un. - Item (R$ 10,00) = R$ 20,00").
+        // Antes ia só "2 un. - Item", e o painel adivinhava preço/categoria pelo cadastro ATUAL.
+        const formatarMoedaResumo = (v) => (Number(v) || 0).toFixed(2).replace('.', ',');
+        const gruposPlanilha = {};
+        itensCongelados.forEach(it => {
+            if (!gruposPlanilha[it.categoria]) gruposPlanilha[it.categoria] = [];
+            gruposPlanilha[it.categoria].push(`${it.qtd} un. - ${it.nome} (R$ ${formatarMoedaResumo(it.precoUnitario)}) = R$ ${formatarMoedaResumo(it.total)}`);
+        });
+        Object.keys(gruposPlanilha).forEach(cat => {
+            itensParaPlanilha += `- ${cat}:\n${gruposPlanilha[cat].join('\n')}\n\n`;
+        });
+
         let totalLiquido = total - cupomAplicado.desconto;
         if(totalLiquido < 0) totalLiquido = 0;
 
@@ -1355,10 +1963,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         const valorTaxaPagamento = totalLiquido * ((taxaPagamento.percentual || 0) / 100);
         const valorRecebidoPagamento = Math.max(0, totalLiquido - valorTaxaPagamento);
 
+        txt += `Valor dos Itens: R$ ${moedaWA(total)}\n`;
+        if(cupomAplicado.codigo) { txt += `Cupom: ${cupomAplicado.codigo}\n`; txt += `Desconto: -R$ ${moedaWA(cupomAplicado.desconto)}\n`; }
+        txt += `*Total Final: R$ ${moedaWA(totalLiquido)}*\n\n`;
         txt += `- *Informações:*\nNome: ${nm}\nNúmero: ${validarEFormatarTelefone(tel)}\nData: ${dataFormatada}\nHorário: ${hr.substring(0,5)}\nPagamento: ${formatarPagamentoCliente(pag, modalidadeCredito)}\n`;
         if(obs) txt += `Observações: ${obs}\n`;
-        if(cupomAplicado.codigo) { txt += `Cupom: ${cupomAplicado.codigo}\n`; txt += `Desconto: -R$${cupomAplicado.desconto.toFixed(2).replace('.', ',')}\n`; }
-        txt += `*Total Final: R$ ${totalLiquido.toLocaleString('pt-BR',{minimumFractionDigits:2})}*\n`;
 
         const dadosPedido = {
             ID_do_Pedido: idPedido,
@@ -1379,6 +1988,10 @@ document.addEventListener("DOMContentLoaded", async function () {
             Cupom: cupomAplicado.codigo ? `Cupom: ${cupomAplicado.codigo}\nDesconto: -R$${cupomAplicado.desconto.toFixed(2).replace('.', ',')}` : "",
             Observacoes: obs || "",
             Resumo_dos_Itens: itensParaPlanilha.trim(),
+            Cardapio: window.__cardapioAtual?.nome || 'Cardápio padrão',
+            CardapioId: window.__cardapioAtual?.id || 'padrao',
+            Itens: itensCongelados,
+            Subtotal_Itens: total.toLocaleString('pt-BR',{minimumFractionDigits:2}),
             createdAt: Date.now()
         };
         

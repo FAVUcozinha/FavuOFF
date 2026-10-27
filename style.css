@@ -1,13 +1,13 @@
 /* --- Fontes --- */
 @font-face {
     font-family: 'Basic Choice';
-    src: url('Basic Choice 2.ttf') format('truetype');
+    src: url('fonts/Basic Choice 2.ttf') format('truetype');
     font-display: swap;
 }
 
 @font-face {
     font-family: 'Cocogoose';
-    src: url('Cocogoose-Pro-Darkmode-trial.ttf') format('truetype');
+    src: url('fonts/Cocogoose-Pro-Darkmode-trial.ttf') format('truetype');
     font-display: swap;
 }
 
