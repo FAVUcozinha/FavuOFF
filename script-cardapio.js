@@ -474,7 +474,12 @@ function aplicarConteudoCardapio(cardapio, inicio) {
 // Cada categoria diz em quais cardápios aparece (sem a lista = só no padrão).
 // =====================================================================
 window.__cardapioAtual = { id: 'padrao', nome: 'Cardápio padrão' };
-async function carregarCardapioAtual() {
+// Feita uma vez só (menu e comunicados esperam a mesma resposta).
+function carregarCardapioAtual() {
+    if (!window.__promessaCardapio) window.__promessaCardapio = descobrirCardapioAtual();
+    return window.__promessaCardapio;
+}
+async function descobrirCardapioAtual() {
     const pedido = (new URLSearchParams(location.search).get('menu') || '').trim().toLowerCase();
     if (!pedido || pedido === 'padrao') return;
     try {
@@ -491,10 +496,9 @@ async function carregarCardapioAtual() {
         });
     }
 }
-function categoriaNoCardapioAtual(c) {
-    const lista = Array.isArray(c.cardapios) ? c.cardapios : ['padrao'];
-    return lista.includes(window.__cardapioAtual.id);
-}
+// 2026-10-15: cada categoria pertence a UM cardápio (sem o campo = padrão).
+function cardapioDaCategoria(c) { return Array.isArray(c.cardapios) && c.cardapios.length ? c.cardapios[0] : (Array.isArray(c.cardapios) ? '' : 'padrao'); }
+function categoriaNoCardapioAtual(c) { return cardapioDaCategoria(c) === window.__cardapioAtual.id; }
 
 document.addEventListener("DOMContentLoaded", async function () {
     
@@ -671,6 +675,7 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     async function carregarAvisos() {
         try {
+            await carregarCardapioAtual();
             const avisosSnap = await getDocs(collection(db, "avisos"));
             const agora = Date.now();
             const avisosAtivos = [];
@@ -682,7 +687,9 @@ document.addEventListener("DOMContentLoaded", async function () {
                 const ativo = a?.ativo !== false;
                 const dentroDoPeriodo = (!inicio || agora >= inicio) && (!fim || agora <= fim);
 
-                if (ativo && dentroDoPeriodo) {
+                // Comunicado só no cardápio dele (sem o campo = padrão).
+                const doCardapio = (a?.cardapio || 'padrao') === window.__cardapioAtual.id;
+                if (ativo && dentroDoPeriodo && doCardapio) {
                     avisosAtivos.push(a);
                 }
             });
