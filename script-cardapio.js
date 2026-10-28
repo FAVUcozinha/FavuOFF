@@ -23,7 +23,10 @@ window.regrasAgenda = {}; // Agenda Global
 // Sem categorias = vale para todos os pedidos. Com categorias = só quando o carrinho
 // tem itens de alguma delas; senão, o dia segue a agenda normal.
 window.regraExcecaoAplicavel = function(dataISO) {
-    const regra = window.regrasAgenda ? window.regrasAgenda[dataISO] : null;
+    // 2026-10-15: cada data específica pertence a um cardápio ("AAAA-MM-DD" = padrão).
+    const idCard = (window.__cardapioAtual && window.__cardapioAtual.id) || 'padrao';
+    const chave = idCard === 'padrao' ? dataISO : `${dataISO}__${idCard}`;
+    const regra = window.regrasAgenda ? window.regrasAgenda[chave] : null;
     if (!regra) return null;
     const cats = Array.isArray(regra.categorias) ? regra.categorias.filter(Boolean) : [];
     if (!cats.length) return regra;
