@@ -123,14 +123,21 @@ function aplicarTemaSite(t) {
         else if (v === SEM) img.style.display = 'none';
         else { img.style.display = ''; img.src = v; } }); };
     const trocarFundo = (sel, v) => { const el = document.querySelector(sel); if (!el) return; el.style.backgroundImage = !v ? '' : (v === SEM ? 'none' : `url('${v}')`); };
+    // 2026-10-15: o cardápio tem topo, rodapé e logo do menu próprios (e cada cardápio pode ter os seus).
+    const idCardImg = ehCardapio && window.__cardapioAtual ? window.__cardapioAtual.id : 'padrao';
+    const doCard = (t.porCardapio && t.porCardapio[idCardImg] && t.porCardapio[idCardImg].imgs) || {};
+    const imgTopoUsar = ehCardapio ? (doCard.imgTopoCardapio || t.imgTopoCardapio || t.imgTopo) : t.imgTopo;
+    const imgRodapeUsar = ehCardapio ? (doCard.imgRodapeCardapio || t.imgRodapeCardapio || t.imgRodape) : t.imgRodape;
     trocarImg('.hero-logo-big', t.logoPrincipal);
-    trocarImg('.menu-logo-img', t.logoMenu || t.logoPrincipal);
+    trocarImg('.menu-logo-img', ehCardapio ? (doCard.logoMenuCardapio || t.logoMenuCardapio || t.logoMenu || t.logoPrincipal) : (t.logoMenu || t.logoPrincipal));
     trocarImg('.footer-logo', t.logoRodape);
-    trocarFundo('header', t.imgTopo);
+    trocarFundo('header', imgTopoUsar);
     // Sem imagem no topo: tira também a sombra que marcava o espaço.
     const cab = document.querySelector('header');
-    if (cab) cab.style.boxShadow = t.imgTopo === SEM ? 'none' : '';
-    trocarFundo('footer', t.imgRodape);
+    if (cab) cab.style.boxShadow = imgTopoUsar === SEM ? 'none' : '';
+    trocarFundo('footer', imgRodapeUsar);
+    // Regras próprias do cardápio aberto (body.cardapio-<id>).
+    if (ehCardapio && t.porCardapio && t.porCardapio[idCardImg] && Array.isArray(t.porCardapio[idCardImg].regrasCss)) t.porCardapio[idCardImg].regrasCss.forEach(x => r.push(x));
     trocarImg('#aboutModal .modal-img', t.imgQuemSomos);
     // Regras de cada elemento, já prontas no tema (painel > Temas).
     (Array.isArray(t.regrasCss) ? t.regrasCss : []).forEach(x => r.push(x));
@@ -253,10 +260,19 @@ async function resolverImagemTema(valor) {
     } catch (e) { return ''; }
 }
 async function resolverImagensTema(t) {
-    const campos = ['logoPrincipal', 'logoMenu', 'imgTopo', 'imgRodape', 'logoRodape', 'imgQuemSomos'];
+    const campos = ['logoPrincipal', 'logoMenu', 'imgTopo', 'imgRodape', 'logoRodape', 'imgQuemSomos', 'imgTopoCardapio', 'imgRodapeCardapio', 'logoMenuCardapio'];
     const valores = await Promise.all(campos.map(k => resolverImagemTema(t[k])));
     const out = { ...t };
     campos.forEach((k, i) => { out[k] = valores[i]; });
+    // Imagens de cada cardápio (Natal…).
+    if (t.porCardapio) {
+        out.porCardapio = {};
+        for (const [id, st] of Object.entries(t.porCardapio)) {
+            const imgs = {};
+            for (const [k, v] of Object.entries((st && st.imgs) || {})) imgs[k] = await resolverImagemTema(v);
+            out.porCardapio[id] = { ...st, imgs };
+        }
+    }
     return out;
 }
 
@@ -284,15 +300,27 @@ function linkSiteHtml(item, classe, conteudo) {
     return `<a href="${escSite(a.href)}" class="${classe}"${alvo}${clique}>${conteudo}</a>`;
 }
 const visiveisSite = lista => (Array.isArray(lista) ? lista : []).filter(i => i && i.visivel !== false).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+// Cor própria de um botão (degradê nas letras quando for texto).
+function estiloCorSite(v, tipo) {
+    if (!v) return '';
+    if (tipo === 'fundo') return `background:${v} !important;`;
+    return /gradient\(/i.test(v) ? `background:${v};-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent !important;` : `color:${v} !important;`;
+}
+function aplicarIconeMenuSite(icone) {
+    if (!icone) return;
+    document.querySelectorAll('#mobile-menu-btn i, .menu-btn i').forEach(i => { i.className = icone; });
+}
 function aplicarMenuLateralSite(dados) {
     if (Array.isArray(dados.menuLateral)) {
         const ul = document.querySelector('#side-menu .nav-links');
         if (ul) ul.innerHTML = visiveisSite(dados.menuLateral).map(i => `<li>${linkSiteHtml(i, 'menu-link', escSite(i.titulo))}</li>`).join('');
+        if (ul) visiveisSite(dados.menuLateral).forEach((i, n) => { const a = ul.querySelectorAll('a')[n]; if (a && i.corTexto) a.setAttribute('style', estiloCorSite(i.corTexto, 'texto')); });
     }
     if (Array.isArray(dados.redes)) {
         const box = document.querySelector('#side-menu .menu-socials');
-        if (box) box.innerHTML = visiveisSite(dados.redes).map(i => linkSiteHtml(i, 'menu-social-link', `<i class="${escSite(i.icone || 'fas fa-link')}"></i> ${escSite(i.titulo)}`)).join('');
+        if (box) box.innerHTML = visiveisSite(dados.redes).map(i => linkSiteHtml(i, 'menu-social-link', `<i class="${escSite(i.icone || 'fas fa-link')}" style="${estiloCorSite(i.corIcone, 'texto')}"></i> <span style="${estiloCorSite(i.corTexto, 'texto')}">${escSite(i.titulo)}</span>`)).join('');
     }
+    aplicarIconeMenuSite(dados.menuIcone);
 }
 function aplicarQuemSomosSite(qs) {
     if (!qs) return;
@@ -318,7 +346,9 @@ function aplicarConteudoInicio(c) {
     if (Array.isArray(c.botoesCapa)) {
         const grid = document.getElementById('dynamic-grid-links');
         if (grid) grid.innerHTML = visiveisSite(c.botoesCapa).map(i => linkSiteHtml(i, 'clean-card',
-            `<div class="card-icon"><i class="${escSite(i.icone || 'fas fa-link')}"></i></div><div class="card-info"><h3 class="font-display">${escSite(i.titulo)}</h3><p class="font-body">${window.formatText(i.legenda || '')}</p></div>`)).join('');
+            `<div class="card-icon" style="${estiloCorSite(i.corIcone, 'texto')}"><i class="${escSite(i.icone || 'fas fa-link')}" style="${estiloCorSite(i.corIcone, 'texto')}"></i></div><div class="card-info"><h3 class="font-display" style="${estiloCorSite(i.corTitulo, 'texto')}">${escSite(i.titulo)}</h3>${i.legenda ? `<p class="font-body" style="${estiloCorSite(i.corLegenda, 'texto')}">${window.formatText(i.legenda)}</p>` : ''}</div>`)).join('');
+        // Fundo próprio de cada botão.
+        if (grid) visiveisSite(c.botoesCapa).forEach((i, n) => { const a = grid.children[n]; if (a && i.corFundo) a.setAttribute('style', estiloCorSite(i.corFundo, 'fundo')); });
     }
     aplicarMenuLateralSite(c);
     aplicarQuemSomosSite(c.quemSomos);
@@ -329,6 +359,7 @@ async function carregarDadosSite(id) {
 }
 
 document.addEventListener("DOMContentLoaded", async function () {
+    document.body.classList.add('pg-inicio');
     
     // APLICAR TEMA (CORES + IMAGENS)
     try {

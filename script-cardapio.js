@@ -259,14 +259,21 @@ function aplicarTemaSite(t) {
         else if (v === SEM) img.style.display = 'none';
         else { img.style.display = ''; img.src = v; } }); };
     const trocarFundo = (sel, v) => { const el = document.querySelector(sel); if (!el) return; el.style.backgroundImage = !v ? '' : (v === SEM ? 'none' : `url('${v}')`); };
+    // 2026-10-15: o cardápio tem topo, rodapé e logo do menu próprios (e cada cardápio pode ter os seus).
+    const idCardImg = ehCardapio && window.__cardapioAtual ? window.__cardapioAtual.id : 'padrao';
+    const doCard = (t.porCardapio && t.porCardapio[idCardImg] && t.porCardapio[idCardImg].imgs) || {};
+    const imgTopoUsar = ehCardapio ? (doCard.imgTopoCardapio || t.imgTopoCardapio || t.imgTopo) : t.imgTopo;
+    const imgRodapeUsar = ehCardapio ? (doCard.imgRodapeCardapio || t.imgRodapeCardapio || t.imgRodape) : t.imgRodape;
     trocarImg('.hero-logo-big', t.logoPrincipal);
-    trocarImg('.menu-logo-img', t.logoMenu || t.logoPrincipal);
+    trocarImg('.menu-logo-img', ehCardapio ? (doCard.logoMenuCardapio || t.logoMenuCardapio || t.logoMenu || t.logoPrincipal) : (t.logoMenu || t.logoPrincipal));
     trocarImg('.footer-logo', t.logoRodape);
-    trocarFundo('header', t.imgTopo);
+    trocarFundo('header', imgTopoUsar);
     // Sem imagem no topo: tira também a sombra que marcava o espaço.
     const cab = document.querySelector('header');
-    if (cab) cab.style.boxShadow = t.imgTopo === SEM ? 'none' : '';
-    trocarFundo('footer', t.imgRodape);
+    if (cab) cab.style.boxShadow = imgTopoUsar === SEM ? 'none' : '';
+    trocarFundo('footer', imgRodapeUsar);
+    // Regras próprias do cardápio aberto (body.cardapio-<id>).
+    if (ehCardapio && t.porCardapio && t.porCardapio[idCardImg] && Array.isArray(t.porCardapio[idCardImg].regrasCss)) t.porCardapio[idCardImg].regrasCss.forEach(x => r.push(x));
     trocarImg('#aboutModal .modal-img', t.imgQuemSomos);
     // Regras de cada elemento, já prontas no tema (painel > Temas).
     (Array.isArray(t.regrasCss) ? t.regrasCss : []).forEach(x => r.push(x));
@@ -325,6 +332,15 @@ function prepararPreviaAoVivo() {
             if ((abrir === 'resumo' || abrir === 'info') && ![...document.querySelectorAll('.quantidade-input')].some(i => (parseInt(i.value) || 0) > 0)) {
                 const exemplo = document.querySelector('.quantidade-input');
                 if (exemplo) { exemplo.value = 1; exemplo.dispatchEvent(new Event('input', { bubbles: true })); exemplo.dispatchEvent(new Event('change', { bubbles: true })); }
+            }
+            const fotoItem = document.getElementById('popup-item-imagem');
+            if (fotoItem) {
+                if (abrir === 'itemfoto') {
+                    const nome = document.getElementById('item-nome-display'), desc = document.getElementById('item-descricao-display');
+                    if (nome && !nome.textContent) nome.textContent = 'Nome do item';
+                    if (desc && !desc.textContent) desc.textContent = 'Descrição do item, como aparece para o cliente.';
+                    fotoItem.style.display = 'flex'; fotoItem.classList.add('show');
+                } else { fotoItem.style.display = ''; fotoItem.classList.remove('show'); }
             }
             ['resumo', 'info'].forEach(n => {
                 const pop = document.getElementById(n === 'resumo' ? 'popup-resumo' : 'popup-pedido');
@@ -389,10 +405,19 @@ async function resolverImagemTema(valor) {
     } catch (e) { return ''; }
 }
 async function resolverImagensTema(t) {
-    const campos = ['logoPrincipal', 'logoMenu', 'imgTopo', 'imgRodape', 'logoRodape', 'imgQuemSomos'];
+    const campos = ['logoPrincipal', 'logoMenu', 'imgTopo', 'imgRodape', 'logoRodape', 'imgQuemSomos', 'imgTopoCardapio', 'imgRodapeCardapio', 'logoMenuCardapio'];
     const valores = await Promise.all(campos.map(k => resolverImagemTema(t[k])));
     const out = { ...t };
     campos.forEach((k, i) => { out[k] = valores[i]; });
+    // Imagens de cada cardápio (Natal…).
+    if (t.porCardapio) {
+        out.porCardapio = {};
+        for (const [id, st] of Object.entries(t.porCardapio)) {
+            const imgs = {};
+            for (const [k, v] of Object.entries((st && st.imgs) || {})) imgs[k] = await resolverImagemTema(v);
+            out.porCardapio[id] = { ...st, imgs };
+        }
+    }
     return out;
 }
 
@@ -420,15 +445,27 @@ function linkSiteHtml(item, classe, conteudo) {
     return `<a href="${escSite(a.href)}" class="${classe}"${alvo}${clique}>${conteudo}</a>`;
 }
 const visiveisSite = lista => (Array.isArray(lista) ? lista : []).filter(i => i && i.visivel !== false).sort((a, b) => (a.ordem || 0) - (b.ordem || 0));
+// Cor própria de um botão (degradê nas letras quando for texto).
+function estiloCorSite(v, tipo) {
+    if (!v) return '';
+    if (tipo === 'fundo') return `background:${v} !important;`;
+    return /gradient\(/i.test(v) ? `background:${v};-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent !important;` : `color:${v} !important;`;
+}
+function aplicarIconeMenuSite(icone) {
+    if (!icone) return;
+    document.querySelectorAll('#mobile-menu-btn i, .menu-btn i').forEach(i => { i.className = icone; });
+}
 function aplicarMenuLateralSite(dados) {
     if (Array.isArray(dados.menuLateral)) {
         const ul = document.querySelector('#side-menu .nav-links');
         if (ul) ul.innerHTML = visiveisSite(dados.menuLateral).map(i => `<li>${linkSiteHtml(i, 'menu-link', escSite(i.titulo))}</li>`).join('');
+        if (ul) visiveisSite(dados.menuLateral).forEach((i, n) => { const a = ul.querySelectorAll('a')[n]; if (a && i.corTexto) a.setAttribute('style', estiloCorSite(i.corTexto, 'texto')); });
     }
     if (Array.isArray(dados.redes)) {
         const box = document.querySelector('#side-menu .menu-socials');
-        if (box) box.innerHTML = visiveisSite(dados.redes).map(i => linkSiteHtml(i, 'menu-social-link', `<i class="${escSite(i.icone || 'fas fa-link')}"></i> ${escSite(i.titulo)}`)).join('');
+        if (box) box.innerHTML = visiveisSite(dados.redes).map(i => linkSiteHtml(i, 'menu-social-link', `<i class="${escSite(i.icone || 'fas fa-link')}" style="${estiloCorSite(i.corIcone, 'texto')}"></i> <span style="${estiloCorSite(i.corTexto, 'texto')}">${escSite(i.titulo)}</span>`)).join('');
     }
+    aplicarIconeMenuSite(dados.menuIcone);
 }
 function aplicarQuemSomosSite(qs) {
     if (!qs) return;
@@ -454,10 +491,13 @@ async function carregarDadosSite(id) {
 }
 
 // Textos do cardápio editáveis no painel (Layout > Cardápio).
-window.__textosCardapio = { tituloResumo: 'RESUMO DO PEDIDO', botaoFazerPedido: 'FAZER PEDIDO', tituloInfo: 'INFORMAÇÕES DO PEDIDO', botaoConfirmar: 'CONFIRMAR PEDIDO', saudacaoWhatsapp: 'Olá, Favu!\nGostaria de encomendar os itens abaixo:' };
+window.__textosCardapio = { tituloResumo: 'RESUMO DO PEDIDO', botaoFazerPedido: 'FAZER PEDIDO', tituloInfo: 'INFORMAÇÕES DO PEDIDO', botaoConfirmar: 'CONFIRMAR PEDIDO', saudacaoWhatsapp: 'Olá, Favu!\nGostaria de encomendar os itens abaixo:',
+    tituloCupom: '', phCupom: '', botaoAplicar: '', rotuloNome: '', phNome: '', rotuloTelefone: '', phTelefone: '', rotuloData: '', rotuloPagamento: '', rotuloObs: '', phObs: '', botaoEditar: '', botaoAdicionar: '' };
 async function aplicarSiteCardapio() {
     const tema = window.__temaAtual || {};
-    const cardapio = tema.conteudoCardapio || await carregarDadosSite('site_cardapio');
+    const idCard = (window.__cardapioAtual && window.__cardapioAtual.id) || 'padrao';
+    const doCardapio = tema.porCardapio && tema.porCardapio[idCard] && tema.porCardapio[idCard].conteudoCardapio;
+    const cardapio = doCardapio || tema.conteudoCardapio || await carregarDadosSite('site_cardapio');
     const inicio = tema.conteudoInicio || await carregarDadosSite('site_inicio');
     aplicarConteudoCardapio(cardapio, inicio);
 }
@@ -467,9 +507,17 @@ function aplicarConteudoCardapio(cardapio, inicio) {
     aplicarMenuLateralSite(cardapio);
     const t = cardapio.textos || {};
     Object.keys(window.__textosCardapio).forEach(k => { if (t[k] && String(t[k]).trim()) window.__textosCardapio[k] = String(t[k]); });
-    const h1 = document.querySelector('#popup-resumo h2'); if (h1) h1.textContent = window.__textosCardapio.tituloResumo;
-    const h2 = document.querySelector('#popup-pedido h2'); if (h2) h2.textContent = window.__textosCardapio.tituloInfo;
-    const bc = document.querySelector('#popup-pedido .btn-primary-large'); if (bc) bc.textContent = window.__textosCardapio.botaoConfirmar;
+    const T = window.__textosCardapio;
+    const texto = (sel, v) => { const el = document.querySelector(sel); if (el && v) el.textContent = v; };
+    const dentro = (sel, v) => { const el = document.querySelector(sel); if (el && v) el.setAttribute('placeholder', v); };
+    texto('#popup-resumo h2', T.tituloResumo); texto('#popup-pedido h2', T.tituloInfo); texto('#popup-pedido .btn-primary-large', T.botaoConfirmar);
+    texto('#cupom-container strong', T.tituloCupom); dentro('#cupom-input', T.phCupom); texto('#apply-cupom-btn', T.botaoAplicar);
+    texto('#popup-pedido label[for="nome"]', T.rotuloNome); dentro('#nome', T.phNome);
+    texto('#popup-pedido label[for="telefone"]', T.rotuloTelefone); dentro('#telefone', T.phTelefone);
+    texto('#popup-pedido label[for="data"]', T.rotuloData); texto('#popup-pedido label[for="pagamento"]', T.rotuloPagamento);
+    texto('#popup-pedido label[for="observacoes"]', T.rotuloObs); dentro('#observacoes', T.phObs);
+    texto('#popup-pedido .btn-secondary[onclick*="editarPedido"]', T.botaoEditar); texto('#popup-pedido .btn-secondary[onclick*="fecharPopup"]', T.botaoAdicionar);
+    if (cardapio.rodape) aplicarRodapeSite(cardapio.rodape);
 }
 // =====================================================================
 // VÁRIOS CARDÁPIOS (2026-10-15): cardapio.html?menu=<endereço> abre um cardápio
@@ -484,13 +532,14 @@ function carregarCardapioAtual() {
 }
 async function descobrirCardapioAtual() {
     const pedido = (new URLSearchParams(location.search).get('menu') || '').trim().toLowerCase();
-    if (!pedido || pedido === 'padrao') return;
     try {
         const snap = await getDoc(doc(db, 'config', 'cardapios'));
         const lista = snap.exists() && Array.isArray(snap.data().lista) ? snap.data().lista : [];
-        const achado = lista.find(c => c && c.id === pedido && c.ativo !== false);
+        window.__cardapiosExistentes = new Set(['padrao', ...lista.map(c => c && c.id).filter(Boolean)]);
+        const achado = pedido && pedido !== 'padrao' ? lista.find(c => c && c.id === pedido && c.ativo !== false) : null;
         if (achado) window.__cardapioAtual = { id: achado.id, nome: achado.nome || achado.id };
     } catch (e) {}
+    if (!pedido || pedido === 'padrao') return;
     // Os links internos continuam neste cardápio.
     if (window.__cardapioAtual.id !== 'padrao') {
         document.querySelectorAll('a[href]').forEach(a => {
@@ -500,13 +549,21 @@ async function descobrirCardapioAtual() {
     }
 }
 // 2026-10-15: cada categoria pertence a UM cardápio (sem o campo = padrão).
-function cardapioDaCategoria(c) { return Array.isArray(c.cardapios) && c.cardapios.length ? c.cardapios[0] : (Array.isArray(c.cardapios) ? '' : 'padrao'); }
+// Proteção: cardápio que não existe (ou vazio) = padrão, para a categoria nunca sumir.
+function cardapioDaCategoria(c) {
+    const id = Array.isArray(c.cardapios) && c.cardapios.length ? c.cardapios[0] : 'padrao';
+    const existentes = window.__cardapiosExistentes;
+    return !existentes || existentes.has(id) ? id : 'padrao';
+}
 function categoriaNoCardapioAtual(c) { return cardapioDaCategoria(c) === window.__cardapioAtual.id; }
 
 document.addEventListener("DOMContentLoaded", async function () {
     
     // Tema Cores + Imagens
     try {
+        // Página e cardápio aberto marcados no <body> (as regras do tema usam essas marcas).
+        await carregarCardapioAtual();
+        document.body.classList.add('pg-cardapio', `cardapio-${window.__cardapioAtual.id}`);
         const temaAtual = await obterTemaParaAplicar();
         window.__temaAtual = temaAtual;
         aplicarSiteCardapio();
